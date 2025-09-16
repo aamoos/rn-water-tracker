@@ -2,6 +2,7 @@
 import React from "react";
 import { Stack } from "expo-router";
 import { ProfileProvider } from "../src/store/profile";
+import "../src/lib/calendar-locale"; // ✅ 로케일 설정 로드
 
 export default function RootLayout() {
   return (
