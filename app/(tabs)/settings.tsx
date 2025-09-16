@@ -1,18 +1,37 @@
+// app/(tabs)/settings.tsx
 import React, { useState } from "react";
-import { View, Text, TextInput, Pressable, Alert } from "react-native";
+import {
+  View,
+  Text,
+  TextInput,
+  Pressable,
+  Alert,
+  Platform,
+  Modal,
+  TouchableWithoutFeedback,
+} from "react-native";
 import { useRouter } from "expo-router";
 import { useProfile } from "../../src/store/profile";
+import DateTimePicker, {
+  DateTimePickerEvent,
+} from "@react-native-community/datetimepicker";
 
 export default function Settings() {
   const router = useRouter();
-  const { profile, setHW, reminders, addDailyReminder, removeReminder } = useProfile();
+  const { profile, setHW, reminders, addDailyReminder, removeReminder } =
+    useProfile();
 
+  // 프로필 입력값
   const [height, setHeight] = useState(
     profile?.heightCm ? String(profile.heightCm) : ""
   );
   const [weight, setWeight] = useState(
     profile?.weightKg ? String(profile.weightKg) : ""
   );
+
+  // 시간 선택기 상태
+  const [showPicker, setShowPicker] = useState(false);
+  const [pickTime, setPickTime] = useState<Date>(new Date());
 
   const onSave = () => {
     const h = Number(height);
@@ -22,14 +41,45 @@ export default function Settings() {
       return;
     }
     setHW(h, w);
-    router.replace("/");
+    router.replace("/(tabs)/index");
   };
 
+  // 빠른 추가(프리셋 시간)
   const quickAdd = async (hour: number, minute: number) => {
     try {
       await addDailyReminder(hour, minute);
     } catch (e: any) {
       Alert.alert("알림", e?.message ?? "알림을 추가할 수 없습니다.");
+    }
+  };
+
+  // 시간 선택기 onChange
+  const onTimeChange = async (event: DateTimePickerEvent, date?: Date) => {
+    if (Platform.OS === "android") {
+      // 안드로이드: 한 번에 팝업. 'set' 이벤트면 확정으로 간주.
+      if (event.type === "set" && date) {
+        setShowPicker(false);
+        try {
+          await addDailyReminder(date.getHours(), date.getMinutes());
+        } catch (e: any) {
+          Alert.alert("알림", e?.message ?? "알림 추가 실패");
+        }
+      } else {
+        setShowPicker(false);
+      }
+    } else {
+      // iOS: 스피너 값만 갱신하고 별도 버튼으로 확정
+      if (date) setPickTime(date);
+    }
+  };
+
+  // iOS에서 선택한 시간 확정 추가
+  const addPickedTime = async () => {
+    try {
+      await addDailyReminder(pickTime.getHours(), pickTime.getMinutes());
+      setShowPicker(false); // ✅ 추가 후 닫기
+    } catch (e: any) {
+      Alert.alert("알림", e?.message ?? "알림 추가 실패");
     }
   };
 
@@ -68,10 +118,125 @@ export default function Settings() {
       {/* ---- 알림 영역 ---- */}
       <View style={{ marginTop: 24, gap: 10 }}>
         <Text style={{ fontSize: 20, fontWeight: "700" }}>알림 시간</Text>
-        <Text style={{ color: "#666" }}>
-          아래 버튼을 눌러 매일 같은 시간에 알림을 추가하세요.
-        </Text>
+        <Text style={{ color: "#666" }}>매일 특정 시간에 알림을 받습니다.</Text>
 
+        {/* ✅ 사용자 지정 시간 추가 */}
+        <View style={{ gap: 8, marginTop: 6 }}>
+          <Pressable
+            onPress={() => setShowPicker(true)}
+            style={{
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: "#2f95dc",
+              backgroundColor: "white",
+              alignSelf: "flex-start",
+            }}
+          >
+            <Text style={{ color: "#2f95dc", fontWeight: "600" }}>
+              시간 직접 추가
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* 모달 형태의 피커 */}
+        <Modal
+          transparent
+          animationType="slide"
+          visible={showPicker}
+          onRequestClose={() => setShowPicker(false)}
+        >
+          {/* 반투명 오버레이 */}
+          <TouchableWithoutFeedback onPress={() => setShowPicker(false)}>
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.35)",
+                justifyContent: "flex-end",
+              }}
+            >
+              {/* 아래쪽 카드 */}
+              <TouchableWithoutFeedback onPress={() => {}}>
+                <View
+                  style={{
+                    backgroundColor: "white",
+                    borderTopLeftRadius: 16,
+                    borderTopRightRadius: 16,
+                    padding: 16,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontWeight: "700",
+                      marginBottom: 8,
+                    }}
+                  >
+                    알림 시간 선택
+                  </Text>
+
+                  <DateTimePicker
+                    mode="time"
+                    value={pickTime}
+                    onChange={onTimeChange}
+                    is24Hour={true}
+                    display={
+                      Platform.OS === "ios" ? "spinner" : "default"
+                    }
+                    themeVariant="light"
+                  />
+
+                  {/* 액션 버튼 */}
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "flex-end",
+                      gap: 12,
+                      marginTop: 12,
+                    }}
+                  >
+                    <Pressable
+                      onPress={() => setShowPicker(false)}
+                      style={{ padding: 10 }}
+                    >
+                      <Text style={{ color: "#666" }}>취소</Text>
+                    </Pressable>
+
+                    {Platform.OS === "ios" && (
+                      <Pressable
+                        onPress={addPickedTime}
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          backgroundColor: "#2f95dc",
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: "white",
+                            fontWeight: "600",
+                          }}
+                        >
+                          {`${String(pickTime.getHours()).padStart(
+                            2,
+                            "0"
+                          )}:${String(pickTime.getMinutes()).padStart(
+                            2,
+                            "0"
+                          )} 추가`}
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
+
+        {/* 기존 ‘빠른 추가’ 프리셋 버튼들 */}
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           {[{ h: 9, m: 30 }, { h: 11, m: 30 }, { h: 14, m: 0 }, { h: 17, m: 0 }].map(
             (t) => (
@@ -87,7 +252,12 @@ export default function Settings() {
                   backgroundColor: "white",
                 }}
               >
-                <Text style={{ color: "#2f95dc", fontWeight: "600" }}>
+                <Text
+                  style={{
+                    color: "#2f95dc",
+                    fontWeight: "600",
+                  }}
+                >
                   {String(t.h).padStart(2, "0")}:
                   {String(t.m).padStart(2, "0")} 추가
                 </Text>
@@ -112,6 +282,7 @@ export default function Settings() {
                   borderColor: "#eee",
                   borderRadius: 10,
                   padding: 12,
+                  backgroundColor: "#fff",
                 }}
               >
                 <Text style={{ fontSize: 16 }}>
