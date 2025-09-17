@@ -21,10 +21,7 @@ export default function Settings() {
   const { profile, setHW, reminders, addDailyReminder, removeReminder } =
     useProfile();
 
-  // 프로필 입력값
-  const [height, setHeight] = useState(
-    profile?.heightCm ? String(profile.heightCm) : ""
-  );
+  // ✅ 키 state/검증 제거 → 몸무게만 관리
   const [weight, setWeight] = useState(
     profile?.weightKg ? String(profile.weightKg) : ""
   );
@@ -34,14 +31,15 @@ export default function Settings() {
   const [pickTime, setPickTime] = useState<Date>(new Date());
 
   const onSave = () => {
-    const h = Number(height);
     const w = Number(weight);
-    if (!w || !h || w <= 0 || h <= 0) {
-      Alert.alert("확인", "키/몸무게를 숫자로 입력해주세요.");
+    if (!w || w <= 0) {
+      Alert.alert("확인", "몸무게를 숫자로 입력해주세요.");
       return;
     }
+    // ✅ 기존에 저장된 키 값 유지 (없으면 0)
+    const h = Number(profile?.heightCm ?? 0);
     setHW(h, w);
-    router.replace("/(tabs)/index");
+    router.replace("/");
   };
 
   // 빠른 추가(프리셋 시간)
@@ -157,7 +155,7 @@ export default function Settings() {
               }}
             >
               {/* 아래쪽 카드 */}
-              <TouchableWithoutFeedback onPress={() => {}}>
+              <TouchableWithoutFeedback onPress={() => { }}>
                 <View
                   style={{
                     backgroundColor: "white",
@@ -181,9 +179,7 @@ export default function Settings() {
                     value={pickTime}
                     onChange={onTimeChange}
                     is24Hour={true}
-                    display={
-                      Platform.OS === "ios" ? "spinner" : "default"
-                    }
+                    display={Platform.OS === "ios" ? "spinner" : "default"}
                     themeVariant="light"
                   />
 
@@ -236,7 +232,7 @@ export default function Settings() {
           </TouchableWithoutFeedback>
         </Modal>
 
-        {/* 기존 ‘빠른 추가’ 프리셋 버튼들 */}
+        {/* 빠른 추가 프리셋 */}
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           {[{ h: 9, m: 30 }, { h: 11, m: 30 }, { h: 14, m: 0 }, { h: 17, m: 0 }].map(
             (t) => (
