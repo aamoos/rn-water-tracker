@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, Pressable, FlatList } from "react-native";
+import { View, Text, Pressable, FlatList, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { useProfile } from "../../src/store/profile";
 import ProgressBar from "../../src/components/ProgressBar";
@@ -14,6 +14,25 @@ export default function Home() {
 
   const todayKey = ymd(new Date());
   const todayLogs = getLogsByDate(todayKey);
+
+  // ✅ 프리셋 탭 시: 프로필(몸무게/권장량) 없으면 설정 유도
+  const onAdd = (amount: number) => {
+    if (!profile || !profile.weightKg || !profile.dailyTargetMl) {
+      Alert.alert(
+        "프로필이 필요해요",
+        "몸무게를 입력하면 하루 권장 섭취량을 계산해드릴게요.",
+        [
+          { text: "취소" },
+          {
+            text: "지금 설정",
+            onPress: () => router.push("/(tabs)/settings"),
+          },
+        ]
+      );
+      return;
+    }
+    addLog("물", amount);
+  };
 
   return (
     <View style={{ flex: 1 }}>
@@ -42,7 +61,7 @@ export default function Home() {
         {WATER_PRESETS.map((item) => (
           <Pressable
             key={item.id}
-            onPress={() => addLog("물", item.amount)}
+            onPress={() => onAdd(item.amount)} // ✅ 여기서 체크
             style={{
               flexBasis: "48%", // 2열
               maxWidth: "48%",
@@ -55,7 +74,7 @@ export default function Home() {
               borderColor: "#eee",
             }}
           >
-            <MaterialCommunityIcons name={item.icon} size={50} color="#2f95dc" />
+            <MaterialCommunityIcons name={item.icon as any} size={50} color="#2f95dc" />
             <Text style={{ marginTop: 8, fontSize: 16, fontWeight: "600" }}>
               {item.label}
             </Text>
@@ -122,7 +141,7 @@ export default function Home() {
       </View>
 
       {/* 프로필 이동 */}
-      <Pressable onPress={() => router.push("/settings")} style={{ marginBottom: 12 }}>
+      <Pressable onPress={() => router.push("/(tabs)/settings")} style={{ marginBottom: 12 }}>
         <Text style={{ color: "gray", textAlign: "center" }}>프로필 수정</Text>
       </Pressable>
     </View>

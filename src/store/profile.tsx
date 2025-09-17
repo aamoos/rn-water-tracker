@@ -66,15 +66,15 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
   // --- 변경 시 저장 ---
   useEffect(() => {
-    if (profile) AsyncStorage.setItem(KEY_PROFILE, JSON.stringify(profile)).catch(() => {});
+    if (profile) AsyncStorage.setItem(KEY_PROFILE, JSON.stringify(profile)).catch(() => { });
   }, [profile]);
 
   useEffect(() => {
-    AsyncStorage.setItem(KEY_LOGS, JSON.stringify(logs)).catch(() => {});
+    AsyncStorage.setItem(KEY_LOGS, JSON.stringify(logs)).catch(() => { });
   }, [logs]);
 
   useEffect(() => {
-    AsyncStorage.setItem(KEY_REMIND, JSON.stringify(reminders)).catch(() => {});
+    AsyncStorage.setItem(KEY_REMIND, JSON.stringify(reminders)).catch(() => { });
   }, [reminders]);
 
   const api = useMemo<ProfileCtx>(() => {

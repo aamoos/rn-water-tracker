@@ -1,5 +1,5 @@
 // app/(tabs)/settings.tsx
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -9,56 +9,189 @@ import {
   Platform,
   Modal,
   TouchableWithoutFeedback,
+  ScrollView,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useProfile } from "../../src/store/profile";
 import DateTimePicker, {
   DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  ensureNotificationPermission,
+  scheduleIntervalReminder,
+  cancelReminder,
+} from "../../src/lib/notifications";
+
+type Mode = "off" | "time" | "interval";
+
+// AsyncStorage 키 (간격 알림 전용)
+const INTERVAL_KEY = "wt.interval.config"; // {minutes:number, notifId:string}
+
+// 간단 라디오/세그먼트 버튼
+function SegButton({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: active ? "#2f95dc" : "#ddd",
+        backgroundColor: active ? "#eaf6ff" : "white",
+      }}
+    >
+      <Text style={{ color: active ? "#2f95dc" : "#333", fontWeight: "600" }}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
 
 export default function Settings() {
   const router = useRouter();
   const { profile, setHW, reminders, addDailyReminder, removeReminder } =
     useProfile();
 
-  // ✅ 키 state/검증 제거 → 몸무게만 관리
+  // --- 프로필(몸무게) ---
   const [weight, setWeight] = useState(
     profile?.weightKg ? String(profile.weightKg) : ""
   );
 
-  // 시간 선택기 상태
-  const [showPicker, setShowPicker] = useState(false);
-  const [pickTime, setPickTime] = useState<Date>(new Date());
-
-  const onSave = () => {
+  const onSaveProfile = () => {
     const w = Number(weight);
     if (!w || w <= 0) {
       Alert.alert("확인", "몸무게를 숫자로 입력해주세요.");
       return;
     }
-    // ✅ 기존에 저장된 키 값 유지 (없으면 0)
-    const h = Number(profile?.heightCm ?? 0);
+    const h = Number(profile?.heightCm ?? 0); // 기존 키 유지
     setHW(h, w);
-    router.replace("/");
+    router.replace("/"); // 저장 후 홈으로
   };
 
-  // 빠른 추가(프리셋 시간)
-  const quickAdd = async (hour: number, minute: number) => {
+  // --- 알림 모드/상태 ---
+  const [mode, setMode] = useState<Mode>("off");
+
+  // 시간 선택기
+  const [showPicker, setShowPicker] = useState(false);
+  const [pickTime, setPickTime] = useState<Date>(new Date());
+
+  // 간격(분) 설정
+  const INTERVAL_OPTIONS = [60, 90, 120, 180] as const;
+  const [intervalMinutes, setIntervalMinutes] = useState<number>(120);
+  const [intervalNotifId, setIntervalNotifId] = useState<string | null>(null);
+
+  // 초기 복원
+  useEffect(() => {
+    (async () => {
+      try {
+        // 간격 알림 복원
+        const raw = await AsyncStorage.getItem(INTERVAL_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { minutes: number; notifId: string };
+          setIntervalMinutes(parsed.minutes);
+          setIntervalNotifId(parsed.notifId);
+        }
+        // 모드 결정: 간격 예약이 있으면 interval, 아니면 시간 예약이 있으면 time, 둘 다 없으면 off
+        if (raw) {
+          setMode("interval");
+        } else if (reminders.length > 0) {
+          setMode("time");
+        } else {
+          setMode("off");
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 모드 전환 핸들러
+  const onChangeMode = async (next: Mode) => {
+    if (next === mode) return;
+    // 전환 정책:
+    // interval → time 로 전환 시: 간격 알림 취소
+    // time → interval 로 전환 시: 시간 알림 전체 취소
     try {
-      await addDailyReminder(hour, minute);
+      if (next === "off") {
+        await turnOffAll();
+      } else if (next === "time") {
+        // 간격 꺼두기
+        await stopIntervalReminder();
+      } else if (next === "interval") {
+        // 시간 알림 전부 제거
+        await removeAllTimeReminders();
+      }
+      setMode(next);
     } catch (e: any) {
-      Alert.alert("알림", e?.message ?? "알림을 추가할 수 없습니다.");
+      Alert.alert("알림", e?.message ?? "모드 전환 중 오류가 발생했습니다.");
     }
   };
 
-  // 시간 선택기 onChange
+  // 전체 끄기
+  const turnOffAll = async () => {
+    await stopIntervalReminder();
+    await removeAllTimeReminders();
+  };
+
+  // 모든 시간 알림 제거
+  const removeAllTimeReminders = async () => {
+    if (!reminders.length) return;
+    const promises = reminders.map((r) => removeReminder(r.id));
+    await Promise.allSettled(promises);
+  };
+
+  // 간격 알림 시작
+  const startIntervalReminder = async (minutes: number) => {
+    const ok = await ensureNotificationPermission();
+    if (!ok) {
+      Alert.alert("알림", "알림 권한이 없습니다.");
+      return;
+    }
+    // 기존 예약이 있으면 정리
+    if (intervalNotifId) {
+      try {
+        await cancelReminder(intervalNotifId);
+      } catch { }
+    }
+    const id = await scheduleIntervalReminder(minutes, "물을 마실 시간이에요 💧");
+    setIntervalNotifId(id);
+    await AsyncStorage.setItem(
+      INTERVAL_KEY,
+      JSON.stringify({ minutes, notifId: id })
+    );
+    setMode("interval");
+  };
+
+  // 간격 알림 중지
+  const stopIntervalReminder = async () => {
+    if (intervalNotifId) {
+      try {
+        await cancelReminder(intervalNotifId);
+      } catch { }
+    }
+    setIntervalNotifId(null);
+    await AsyncStorage.removeItem(INTERVAL_KEY);
+  };
+
+  // 시간 선택기(특정 시각) 변경
   const onTimeChange = async (event: DateTimePickerEvent, date?: Date) => {
     if (Platform.OS === "android") {
-      // 안드로이드: 한 번에 팝업. 'set' 이벤트면 확정으로 간주.
       if (event.type === "set" && date) {
         setShowPicker(false);
         try {
           await addDailyReminder(date.getHours(), date.getMinutes());
+          setMode("time");
         } catch (e: any) {
           Alert.alert("알림", e?.message ?? "알림 추가 실패");
         }
@@ -66,87 +199,283 @@ export default function Settings() {
         setShowPicker(false);
       }
     } else {
-      // iOS: 스피너 값만 갱신하고 별도 버튼으로 확정
       if (date) setPickTime(date);
     }
   };
 
-  // iOS에서 선택한 시간 확정 추가
+  // iOS에서 선택 확정
   const addPickedTime = async () => {
     try {
       await addDailyReminder(pickTime.getHours(), pickTime.getMinutes());
-      setShowPicker(false); // ✅ 추가 후 닫기
+      setShowPicker(false);
+      setMode("time");
     } catch (e: any) {
       Alert.alert("알림", e?.message ?? "알림 추가 실패");
     }
   };
 
+  // 빠른 프리셋 추가
+  const quickAdd = async (h: number, m: number) => {
+    try {
+      await addDailyReminder(h, m);
+      setMode("time");
+    } catch (e: any) {
+      Alert.alert("알림", e?.message ?? "알림을 추가할 수 없습니다.");
+    }
+  };
+
+  // 요약 텍스트
+  const summaryText = useMemo(() => {
+    if (mode === "off") return "알림이 꺼져 있습니다.";
+    if (mode === "interval") {
+      return intervalNotifId
+        ? `간격 알림: ${intervalMinutes}분마다`
+        : "간격 알림: 설정되지 않음";
+    }
+    // time
+    if (!reminders.length) return "등록된 알림이 없습니다.";
+    const items = [...reminders]
+      .sort((a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute))
+      .map(
+        (r) =>
+          `${String(r.hour).padStart(2, "0")}:${String(r.minute).padStart(2, "0")}`
+      );
+    return `매일 ${items.join(" / ")}`;
+  }, [mode, reminders, intervalMinutes, intervalNotifId]);
+
   return (
-    <View style={{ flex: 1, padding: 20, gap: 12 }}>
-      <Text style={{ fontSize: 22, fontWeight: "700" }}>프로필 설정</Text>
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 16 }}>
+      {/* --- 프로필 --- */}
+      <View style={{ gap: 12 }}>
+        <Text style={{ fontSize: 22, fontWeight: "700" }}>프로필 설정</Text>
 
-      <Text>몸무게 (kg)</Text>
-      <TextInput
-        value={weight}
-        onChangeText={setWeight}
-        keyboardType="decimal-pad"
-        placeholder="예: 72"
-        autoFocus={false}
-        style={{
-          borderWidth: 1,
-          borderColor: "#ddd",
-          padding: 12,
-          borderRadius: 8,
-        }}
-      />
+        <Text>몸무게 (kg)</Text>
+        <TextInput
+          value={weight}
+          onChangeText={setWeight}
+          keyboardType="decimal-pad"
+          placeholder="예: 72"
+          style={{
+            borderWidth: 1,
+            borderColor: "#ddd",
+            padding: 12,
+            borderRadius: 8,
+          }}
+        />
 
-      <Pressable
-        onPress={onSave}
-        style={{
-          backgroundColor: "#2f95dc",
-          padding: 14,
-          borderRadius: 10,
-          marginTop: 8,
-        }}
-      >
-        <Text style={{ color: "white", textAlign: "center", fontSize: 16 }}>
-          저장
-        </Text>
-      </Pressable>
+        <Pressable
+          onPress={onSaveProfile}
+          style={{
+            backgroundColor: "#2f95dc",
+            padding: 14,
+            borderRadius: 10,
+            marginTop: 4,
+          }}
+        >
+          <Text style={{ color: "white", textAlign: "center", fontSize: 16 }}>
+            저장
+          </Text>
+        </Pressable>
+      </View>
 
-      {/* ---- 알림 영역 ---- */}
-      <View style={{ marginTop: 24, gap: 10 }}>
-        <Text style={{ fontSize: 20, fontWeight: "700" }}>알림 시간</Text>
-        <Text style={{ color: "#666" }}>매일 특정 시간에 알림을 받습니다.</Text>
+      {/* --- 알림 설정 --- */}
+      <View style={{ gap: 12, marginTop: 10 }}>
+        <Text style={{ fontSize: 20, fontWeight: "700" }}>알림</Text>
+        <Text style={{ color: "#666" }}>{summaryText}</Text>
 
-        {/* ✅ 사용자 지정 시간 추가 */}
-        <View style={{ gap: 8, marginTop: 6 }}>
-          <Pressable
-            onPress={() => setShowPicker(true)}
-            style={{
-              paddingVertical: 10,
-              paddingHorizontal: 14,
-              borderRadius: 10,
-              borderWidth: 1,
-              borderColor: "#2f95dc",
-              backgroundColor: "white",
-              alignSelf: "flex-start",
-            }}
-          >
-            <Text style={{ color: "#2f95dc", fontWeight: "600" }}>
-              시간 직접 추가
-            </Text>
-          </Pressable>
+        {/* 모드 선택 세그먼트 */}
+        <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+          <SegButton
+            label="끄기"
+            active={mode === "off"}
+            onPress={() => onChangeMode("off")}
+          />
+          <SegButton
+            label="특정 시각"
+            active={mode === "time"}
+            onPress={() => onChangeMode("time")}
+          />
+          <SegButton
+            label="간격"
+            active={mode === "interval"}
+            onPress={() => onChangeMode("interval")}
+          />
         </View>
 
-        {/* 모달 형태의 피커 */}
+        {/* --- 특정 시각 모드 --- */}
+        {mode === "time" && (
+          <View style={{ gap: 10, marginTop: 8 }}>
+            <Text style={{ fontWeight: "600" }}>시간 추가</Text>
+
+            <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+              {[{ h: 9, m: 30 }, { h: 11, m: 30 }, { h: 14, m: 0 }, { h: 17, m: 0 }].map(
+                (t) => (
+                  <Pressable
+                    key={`${t.h}:${t.m}`}
+                    onPress={() => quickAdd(t.h, t.m)}
+                    style={{
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
+                      borderRadius: 999,
+                      borderWidth: 1,
+                      borderColor: "#2f95dc",
+                      backgroundColor: "white",
+                    }}
+                  >
+                    <Text style={{ color: "#2f95dc", fontWeight: "600" }}>
+                      {String(t.h).padStart(2, "0")}:{String(t.m).padStart(2, "0")} 추가
+                    </Text>
+                  </Pressable>
+                )
+              )}
+
+              <Pressable
+                onPress={() => setShowPicker(true)}
+                style={{
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: "#2f95dc",
+                  backgroundColor: "white",
+                }}
+              >
+                <Text style={{ color: "#2f95dc", fontWeight: "600" }}>시간 직접 추가</Text>
+              </Pressable>
+            </View>
+
+            {/* 등록된 알림 목록 */}
+            <View style={{ gap: 8 }}>
+              {reminders.length === 0 ? (
+                <Text style={{ color: "#888" }}>등록된 알림이 없습니다.</Text>
+              ) : (
+                [...reminders]
+                  .sort(
+                    (a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute)
+                  )
+                  .map((r) => (
+                    <View
+                      key={r.id}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        borderWidth: 1,
+                        borderColor: "#eee",
+                        borderRadius: 10,
+                        padding: 12,
+                        backgroundColor: "#fff",
+                      }}
+                    >
+                      <Text style={{ fontSize: 16 }}>
+                        {String(r.hour).padStart(2, "0")}:
+                        {String(r.minute).padStart(2, "0")} 매일
+                      </Text>
+                      <Pressable
+                        onPress={() => removeReminder(r.id)}
+                        style={{
+                          paddingVertical: 6,
+                          paddingHorizontal: 12,
+                          backgroundColor: "#eee",
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Text>삭제</Text>
+                      </Pressable>
+                    </View>
+                  ))
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* --- 간격 모드 --- */}
+        {mode === "interval" && (
+          <View style={{ gap: 12, marginTop: 8 }}>
+            <Text style={{ fontWeight: "600" }}>간격 선택 (분)</Text>
+            <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+              {INTERVAL_OPTIONS.map((m) => {
+                const active = intervalMinutes === m;
+                return (
+                  <Pressable
+                    key={m}
+                    onPress={() => setIntervalMinutes(m)}
+                    style={{
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
+                      borderRadius: 999,
+                      borderWidth: 1,
+                      borderColor: active ? "#2f95dc" : "#ddd",
+                      backgroundColor: active ? "#eaf6ff" : "white",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: active ? "#2f95dc" : "#333",
+                        fontWeight: "600",
+                      }}
+                    >
+                      {m}분
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Pressable
+                onPress={async () => {
+                  const ok = await ensureNotificationPermission();
+                  if (!ok) {
+                    Alert.alert("알림", "알림 권한이 없습니다.");
+                    return;
+                  }
+                  await startIntervalReminder(intervalMinutes);
+                  Alert.alert("알림", `${intervalMinutes}분마다 알림이 설정되었습니다.`);
+                }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                  borderRadius: 10,
+                  backgroundColor: "#2f95dc",
+                }}
+              >
+                <Text style={{ color: "white", fontWeight: "700" }}>시작</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={async () => {
+                  await stopIntervalReminder();
+                  Alert.alert("알림", "간격 알림이 중지되었습니다.");
+                }}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: "#ddd",
+                  backgroundColor: "white",
+                }}
+              >
+                <Text style={{ color: "#333", fontWeight: "700" }}>중지</Text>
+              </Pressable>
+            </View>
+
+            <Text style={{ color: "#666" }}>
+              {intervalNotifId
+                ? `현재: ${intervalMinutes}분마다 동작 중`
+                : "현재: 동작 중인 간격 알림이 없습니다."}
+            </Text>
+          </View>
+        )}
+
+        {/* --- TimePicker 모달 (특정 시각 모드에서 사용) --- */}
         <Modal
           transparent
           animationType="slide"
           visible={showPicker}
           onRequestClose={() => setShowPicker(false)}
         >
-          {/* 반투명 오버레이 */}
           <TouchableWithoutFeedback onPress={() => setShowPicker(false)}>
             <View
               style={{
@@ -155,7 +484,6 @@ export default function Settings() {
                 justifyContent: "flex-end",
               }}
             >
-              {/* 아래쪽 카드 */}
               <TouchableWithoutFeedback onPress={() => { }}>
                 <View
                   style={{
@@ -166,11 +494,7 @@ export default function Settings() {
                   }}
                 >
                   <Text
-                    style={{
-                      fontSize: 16,
-                      fontWeight: "700",
-                      marginBottom: 8,
-                    }}
+                    style={{ fontSize: 16, fontWeight: "700", marginBottom: 8 }}
                   >
                     알림 시간 선택
                   </Text>
@@ -184,7 +508,6 @@ export default function Settings() {
                     themeVariant="light"
                   />
 
-                  {/* 액션 버튼 */}
                   <View
                     style={{
                       flexDirection: "row",
@@ -193,10 +516,7 @@ export default function Settings() {
                       marginTop: 12,
                     }}
                   >
-                    <Pressable
-                      onPress={() => setShowPicker(false)}
-                      style={{ padding: 10 }}
-                    >
+                    <Pressable onPress={() => setShowPicker(false)} style={{ padding: 10 }}>
                       <Text style={{ color: "#666" }}>취소</Text>
                     </Pressable>
 
@@ -210,19 +530,10 @@ export default function Settings() {
                           borderRadius: 8,
                         }}
                       >
-                        <Text
-                          style={{
-                            color: "white",
-                            fontWeight: "600",
-                          }}
-                        >
-                          {`${String(pickTime.getHours()).padStart(
-                            2,
-                            "0"
-                          )}:${String(pickTime.getMinutes()).padStart(
-                            2,
-                            "0"
-                          )} 추가`}
+                        <Text style={{ color: "white", fontWeight: "600" }}>
+                          {`${String(pickTime.getHours()).padStart(2, "0")}:${String(
+                            pickTime.getMinutes()
+                          ).padStart(2, "0")} 추가`}
                         </Text>
                       </Pressable>
                     )}
@@ -232,76 +543,7 @@ export default function Settings() {
             </View>
           </TouchableWithoutFeedback>
         </Modal>
-
-        {/* 빠른 추가 프리셋 */}
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {[{ h: 9, m: 30 }, { h: 11, m: 30 }, { h: 14, m: 0 }, { h: 17, m: 0 }].map(
-            (t) => (
-              <Pressable
-                key={`${t.h}:${t.m}`}
-                onPress={() => quickAdd(t.h, t.m)}
-                style={{
-                  paddingVertical: 8,
-                  paddingHorizontal: 12,
-                  borderRadius: 999,
-                  borderWidth: 1,
-                  borderColor: "#2f95dc",
-                  backgroundColor: "white",
-                }}
-              >
-                <Text
-                  style={{
-                    color: "#2f95dc",
-                    fontWeight: "600",
-                  }}
-                >
-                  {String(t.h).padStart(2, "0")}:
-                  {String(t.m).padStart(2, "0")} 추가
-                </Text>
-              </Pressable>
-            )
-          )}
-        </View>
-
-        {/* 예약된 알림 목록 */}
-        <View style={{ marginTop: 8, gap: 8 }}>
-          {reminders.length === 0 ? (
-            <Text style={{ color: "#888" }}>등록된 알림이 없습니다.</Text>
-          ) : (
-            reminders.map((r) => (
-              <View
-                key={r.id}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  borderWidth: 1,
-                  borderColor: "#eee",
-                  borderRadius: 10,
-                  padding: 12,
-                  backgroundColor: "#fff",
-                }}
-              >
-                <Text style={{ fontSize: 16 }}>
-                  {String(r.hour).padStart(2, "0")}:
-                  {String(r.minute).padStart(2, "0")} 매일
-                </Text>
-                <Pressable
-                  onPress={() => removeReminder(r.id)}
-                  style={{
-                    paddingVertical: 6,
-                    paddingHorizontal: 12,
-                    backgroundColor: "#eee",
-                    borderRadius: 8,
-                  }}
-                >
-                  <Text>삭제</Text>
-                </Pressable>
-              </View>
-            ))
-          )}
-        </View>
       </View>
-    </View>
+    </ScrollView>
   );
 }

@@ -105,7 +105,7 @@ export default function CalendarTab() {
                       justifyContent: "center",
                     }}
                   >
-                    <Text style={{ fontSize: 14 }}>🏆</Text>
+                    <Text style={{ fontSize: 14 }}>⭐</Text>
                   </View>
                 )}
               </View>
