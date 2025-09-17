@@ -42,7 +42,7 @@ export default function StatsTab() {
                     labels: last7Days.map((d) => d.date),
                     datasets: [{ data: last7Days.map((d) => d.total) }],
                 }}
-                width={screenWidth - 32}
+                width={screenWidth - 64}
                 height={220}
                 yAxisSuffix="ml"
                 chartConfig={{
@@ -65,7 +65,7 @@ export default function StatsTab() {
                     labels: last30Days.filter((_, i) => i % 5 === 0).map((d) => d.date),
                     datasets: [{ data: last30Days.map((d) => d.total) }],
                 }}
-                width={screenWidth - 32}
+                width={screenWidth - 64}
                 height={220}
                 yAxisSuffix="ml"
                 chartConfig={{

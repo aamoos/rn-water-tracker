@@ -1,10 +1,13 @@
-// src/store/profile.tsx
-import 'react-native-get-random-values'; // uuid 폴리필 (uuid import보다 먼저)
-import React, { createContext, useContext, useMemo, useState, useEffect } from "react";
-import { v4 as uuidv4 } from "uuid";
+// src/store/profile.ts
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-
-import type { Profile, IntakeLog, Reminder } from "../types";
+import { v4 as uuidv4 } from "uuid";
 import { calcDailyWaterTargetMl } from "../lib/calc";
 import { ymd } from "../lib/date";
 import {
@@ -13,133 +16,227 @@ import {
   cancelReminder,
 } from "../lib/notifications";
 
-// AsyncStorage keys
+// ---------- Types ----------
+export type Profile = {
+  heightCm: number;
+  weightKg: number;
+  dailyTargetMl: number;
+};
+
+export type IntakeLog = {
+  id: string;
+  beverage: string; // "물"
+  amount: number; // ml
+  createdAt: number; // timestamp
+};
+
+export type Reminder = {
+  id: string; // expo-notifications schedule id
+  hour: number;
+  minute: number;
+};
+
+export type CustomWaterPreset = {
+  id: string;
+  label: string;
+  amount: number;
+  icon: string;       // ← 필수로 변경
+  isCustom?: boolean; // UI 용도
+};
+
+// ---------- Storage Keys ----------
 const KEY_PROFILE = "wt.profile";
 const KEY_LOGS = "wt.logs";
-const KEY_REMIND = "wt.reminders";
+const KEY_REMINDERS = "wt.reminders";
+const KEY_PRESETS = "wt.custom_presets";
 
+// ---------- Context Shape ----------
 type ProfileCtx = {
-  // 프로필 & 권장량
+  // 프로필
   profile: Profile | null;
   setHW: (heightCm: number, weightKg: number) => void;
 
-  // 섭취 로그
+  // 로그
   logs: IntakeLog[];
   addLog: (beverage: string, amount: number) => void;
-  removeLog: (id: string) => void;                  // ✅ 추가
+  removeLog: (id: string) => void;
   todayTotal: number;
+  dayTotals: Record<string, number>;
+  getLogsByDate: (dayKey: string) => IntakeLog[];
 
-  // 알림
+  // 알림(특정 시각)
   reminders: Reminder[];
   addDailyReminder: (hour: number, minute: number) => Promise<void>;
   removeReminder: (id: string) => Promise<void>;
 
-  // 달력용
-  dayTotals: Record<string, number>;              // YYYY-MM-DD -> 합계(ml)
-  getLogsByDate: (dayKey: string) => IntakeLog[]; // 특정 날짜의 로그
+  // 커스텀 프리셋
+  customPresets: CustomWaterPreset[];
+  addPreset: (label: string, amount: number, icon?: string) => Promise<void>;
+  removePreset: (id: string) => Promise<void>;
 };
 
 const Ctx = createContext<ProfileCtx | null>(null);
 
+// ---------- Provider ----------
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
+  // 프로필
   const [profile, setProfile] = useState<Profile | null>(null);
+  // 로그
   const [logs, setLogs] = useState<IntakeLog[]>([]);
+  // 알림(특정 시각)
   const [reminders, setReminders] = useState<Reminder[]>([]);
+  // 커스텀 프리셋
+  const [customPresets, setCustomPresets] = useState<CustomWaterPreset[]>([]);
 
-  // --- 초기 복원 ---
+  // ---- Load from storage on mount ----
   useEffect(() => {
     (async () => {
       try {
-        const [p, l, r] = await Promise.all([
+        const [p, l, r, c] = await Promise.all([
           AsyncStorage.getItem(KEY_PROFILE),
           AsyncStorage.getItem(KEY_LOGS),
-          AsyncStorage.getItem(KEY_REMIND),
+          AsyncStorage.getItem(KEY_REMINDERS),
+          AsyncStorage.getItem(KEY_PRESETS),
         ]);
         if (p) setProfile(JSON.parse(p));
         if (l) setLogs(JSON.parse(l));
         if (r) setReminders(JSON.parse(r));
-      } catch (e) {
-        console.warn("restore failed", e);
+        if (c) setCustomPresets(JSON.parse(c));
+      } catch {
+        // ignore
       }
     })();
   }, []);
 
-  // --- 변경 시 저장 ---
+  // ---- Persist on change ----
   useEffect(() => {
-    if (profile) AsyncStorage.setItem(KEY_PROFILE, JSON.stringify(profile)).catch(() => { });
+    AsyncStorage.setItem(KEY_PROFILE, JSON.stringify(profile ?? null)).catch(() => {});
   }, [profile]);
 
   useEffect(() => {
-    AsyncStorage.setItem(KEY_LOGS, JSON.stringify(logs)).catch(() => { });
+    AsyncStorage.setItem(KEY_LOGS, JSON.stringify(logs)).catch(() => {});
   }, [logs]);
 
   useEffect(() => {
-    AsyncStorage.setItem(KEY_REMIND, JSON.stringify(reminders)).catch(() => { });
+    AsyncStorage.setItem(KEY_REMINDERS, JSON.stringify(reminders)).catch(() => {});
   }, [reminders]);
 
-  const api = useMemo<ProfileCtx>(() => {
-    // 오늘 합계
-    const todayKey = ymd(new Date());
-    const todayTotal = logs
-      .filter((l) => ymd(l.createdAt) === todayKey)
+  useEffect(() => {
+    AsyncStorage.setItem(KEY_PRESETS, JSON.stringify(customPresets)).catch(() => {});
+  }, [customPresets]);
+
+  // ---- Derived values ----
+  const todayKey = ymd(new Date());
+  const todayTotal = useMemo(() => {
+    return logs
+      .filter((l) => ymd(new Date(l.createdAt)) === todayKey)
       .reduce((s, l) => s + l.amount, 0);
+  }, [logs, todayKey]);
 
-    // 날짜별 합계
-    const totals: Record<string, number> = {};
+  const dayTotals = useMemo(() => {
+    const map: Record<string, number> = {};
     for (const l of logs) {
-      const k = ymd(l.createdAt);
-      totals[k] = (totals[k] ?? 0) + l.amount;
+      const k = ymd(new Date(l.createdAt));
+      map[k] = (map[k] ?? 0) + l.amount;
     }
+    return map;
+  }, [logs]);
 
-    return {
-      // 프로필
-      profile,
-      setHW: (heightCm, weightKg) => {
-        const dailyTargetMl = calcDailyWaterTargetMl(weightKg);
-        setProfile({ heightCm, weightKg, dailyTargetMl });
-      },
+  const getLogsByDate = (dayKey: string) =>
+    logs.filter((l) => ymd(new Date(l.createdAt)) === dayKey);
 
-      // 섭취 로그
-      logs,
-      addLog: (beverage, amount) => {
-        setLogs((prev) => [
-          ...prev,
-          { id: uuidv4(), beverage, amount, createdAt: Date.now() },
-        ]);
-      },
-      removeLog: (id) => {                           // ✅ 추가 구현
-        setLogs((prev) => prev.filter((l) => l.id !== id));
-      },
-      todayTotal,
+  // ---- API impl ----
+  const setHW = (heightCm: number, weightKg: number) => {
+    const dailyTargetMl = calcDailyWaterTargetMl(weightKg);
+    setProfile({ heightCm, weightKg, dailyTargetMl });
+  };
 
-      // 알림
-      reminders,
-      addDailyReminder: async (hour, minute) => {
-        const ok = await ensureNotificationPermission();
-        if (!ok) throw new Error("알림 권한이 없습니다.");
-        const notifId = await scheduleDailyReminder(
-          hour,
-          minute,
-          `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} 물 한 잔!`
-        );
-        const id = uuidv4();
-        setReminders((prev) => [...prev, { id, hour, minute, notifId }]);
-      },
-      removeReminder: async (id) => {
-        const r = reminders.find((x) => x.id === id);
-        if (r) await cancelReminder(r.notifId);
-        setReminders((prev) => prev.filter((x) => x.id !== id));
-      },
+  const addLog = (beverage: string, amount: number) => {
+    setLogs((prev) => [
+      ...prev,
+      { id: uuidv4(), beverage, amount, createdAt: Date.now() },
+    ]);
+  };
 
-      // 달력용
-      dayTotals: totals,
-      getLogsByDate: (dayKey: string) => logs.filter((l) => ymd(l.createdAt) === dayKey),
+  const removeLog = (id: string) => {
+    setLogs((prev) => prev.filter((l) => l.id !== id));
+  };
+
+  // 알림: 매일 특정 시각 예약
+  const addDailyReminder = async (hour: number, minute: number) => {
+    const ok = await ensureNotificationPermission();
+    if (!ok) throw new Error("알림 권한이 없습니다.");
+
+    const id = await scheduleDailyReminder(
+      hour,
+      minute,
+      "물을 마실 시간이에요 💧"
+    );
+
+    setReminders((prev) => [
+      ...prev,
+      { id, hour, minute },
+    ]);
+  };
+
+  const removeReminder = async (id: string) => {
+    try {
+      await cancelReminder(id);
+    } finally {
+      setReminders((prev) => prev.filter((r) => r.id !== id));
+    }
+  };
+
+  // 커스텀 프리셋
+  const addPreset = async (label: string, amount: number, icon: string = "cup") => {
+    const preset: CustomWaterPreset = {
+      id: `custom-${uuidv4()}`,
+      label: label.trim(),
+      amount,
+      icon,             // ← 항상 존재
+      isCustom: true,
     };
-  }, [profile, logs, reminders]);
+    setCustomPresets((prev) => [...prev, preset]);
+  };
+
+  const removePreset = async (id: string) => {
+    setCustomPresets((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const api = useMemo<ProfileCtx>(
+    () => ({
+      profile,
+      setHW,
+
+      logs,
+      addLog,
+      removeLog,
+      todayTotal,
+      dayTotals,
+      getLogsByDate,
+
+      reminders,
+      addDailyReminder,
+      removeReminder,
+
+      customPresets,
+      addPreset,
+      removePreset,
+    }),
+    [
+      profile,
+      logs,
+      todayTotal,
+      dayTotals,
+      reminders,
+      customPresets,
+    ]
+  );
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }
 
+// ---------- Hook ----------
 export function useProfile() {
   const ctx = useContext(Ctx);
   if (!ctx) throw new Error("useProfile must be used within ProfileProvider");

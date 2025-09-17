@@ -22,6 +22,7 @@ import {
   scheduleIntervalReminder,
   cancelReminder,
 } from "../../src/lib/notifications";
+import { RewardedAdManager } from "../../src/lib/admob";
 
 type Mode = "off" | "time" | "interval";
 
@@ -66,6 +67,50 @@ export default function Settings() {
   const [weight, setWeight] = useState(
     profile?.weightKg ? String(profile.weightKg) : ""
   );
+
+  // --- 프리미엄 기능 ---
+  const [isPremiumUnlocked, setIsPremiumUnlocked] = useState(false);
+
+  // 프리미엄 잠금 해제 확인
+  useEffect(() => {
+    const checkPremium = async () => {
+      try {
+        const unlocked = await AsyncStorage.getItem("premium_unlocked");
+        setIsPremiumUnlocked(unlocked === "true");
+      } catch (e) {
+        // ignore
+      }
+    };
+    checkPremium();
+  }, []);
+
+  // 리워드 광고 시청하여 프리미엄 기능 잠금 해제
+  const unlockPremiumWithAd = async () => {
+    const adManager = RewardedAdManager.getInstance();
+
+    if (!adManager.isAdLoaded()) {
+      Alert.alert("광고 준비 중", "잠시 후 다시 시도해주세요.");
+      return;
+    }
+
+    try {
+      const result = await adManager.showAd();
+
+      if (result.showed && result.rewarded) {
+        // 리워드 받음 - 프리미엄 기능 잠금 해제
+        await AsyncStorage.setItem("premium_unlocked", "true");
+        setIsPremiumUnlocked(true);
+        Alert.alert(
+          "🎉 잠금 해제 완료!",
+          "프리미엄 테마가 잠금 해제되었습니다!"
+        );
+      } else if (result.showed && !result.rewarded) {
+        Alert.alert("광고 시청 완료", "광고를 끝까지 시청해야 보상을 받을 수 있습니다.");
+      }
+    } catch (error) {
+      Alert.alert("오류", "광고 시청 중 문제가 발생했습니다.");
+    }
+  };
 
   const onSaveProfile = () => {
     const w = Number(weight);
@@ -543,6 +588,57 @@ export default function Settings() {
             </View>
           </TouchableWithoutFeedback>
         </Modal>
+      </View>
+
+      {/* --- 프리미엄 기능 --- */}
+      <View style={{ gap: 12, marginTop: 10 }}>
+        <Text style={{ fontSize: 20, fontWeight: "700" }}>프리미엄 기능</Text>
+
+        {isPremiumUnlocked ? (
+          <View style={{
+            padding: 16,
+            backgroundColor: "#e8f5e8",
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: "#4caf50"
+          }}>
+            <Text style={{ color: "#2e7d32", fontWeight: "600", textAlign: "center" }}>
+              🎉 프리미엄 테마가 잠금 해제되었습니다!
+            </Text>
+            <Text style={{ color: "#2e7d32", textAlign: "center", marginTop: 4 }}>
+              앞으로 더 많은 프리미엄 기능을 이용하실 수 있어요.
+            </Text>
+          </View>
+        ) : (
+          <View style={{
+            padding: 16,
+            backgroundColor: "#fff3e0",
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: "#ff9800"
+          }}>
+            <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
+              🎨 프리미엄 테마 잠금 해제
+            </Text>
+            <Text style={{ color: "#666", marginBottom: 12 }}>
+              광고를 시청하고 아름다운 프리미엄 테마를 무료로 이용하세요!
+            </Text>
+
+            <Pressable
+              onPress={unlockPremiumWithAd}
+              style={{
+                backgroundColor: "#ff9800",
+                padding: 12,
+                borderRadius: 8,
+                alignItems: "center"
+              }}
+            >
+              <Text style={{ color: "white", fontWeight: "700", fontSize: 16 }}>
+                📺 광고 시청하고 잠금 해제
+              </Text>
+            </Pressable>
+          </View>
+        )}
       </View>
     </ScrollView>
   );
