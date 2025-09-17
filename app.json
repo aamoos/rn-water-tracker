@@ -1,10 +1,31 @@
 {
   "expo": {
-    "scheme": "acme",
+    "name": "오늘의 물",
+    "slug": "rn-water-tracker",
+    "scheme": "todaywater",
+    "version": "1.0.0",
+    "orientation": "portrait",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-notifications"
     ],
-    "name": "rn-water-tracker",
-    "slug": "rn-water-tracker"
+    "android": {
+      "package": "com.jaekim.todaywater",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#FFFFFF"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.yourname.todaywater",
+      "buildNumber": "1.0.0"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "52caef15-f0f5-45d0-8991-8adec5165462"
+      }
+    }
   }
 }
