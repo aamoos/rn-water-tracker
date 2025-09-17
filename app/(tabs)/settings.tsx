@@ -89,8 +89,9 @@ export default function Settings() {
       <TextInput
         value={weight}
         onChangeText={setWeight}
-        keyboardType="numeric"
+        keyboardType="decimal-pad"
         placeholder="예: 72"
+        autoFocus={false}
         style={{
           borderWidth: 1,
           borderColor: "#ddd",
