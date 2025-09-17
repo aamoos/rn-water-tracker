@@ -1,11 +1,18 @@
 {
+  "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
       "@/*": [
-        "./*"
-      ]
-    }
-  },
-  "extends": "expo/tsconfig.base"
+        "src/*"
+      ] // ✅ "@/..." => "./src/..."
+    },
+    "jsx": "react-native", // ✅ RN JSX
+    "moduleResolution": "bundler", // ✅ Metro/Expo에 맞춤
+    "types": [
+      "react",
+      "react-native"
+    ],
+    "skipLibCheck": true // ✅ 외부 타입 충돌 회피
+  }
 }

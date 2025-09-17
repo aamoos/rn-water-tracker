@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { View, Text, FlatList } from "react-native";
+import { View, Text, FlatList, Pressable } from "react-native";
 import { Calendar } from "react-native-calendars";
 
 import { useProfile } from "../../src/store/profile";
@@ -24,7 +24,6 @@ export default function CalendarTab() {
   const todayKey = ymd(new Date());
   const [selected, setSelected] = useState<string>(todayKey);
 
-  
   // 달력 표시(달성/미달 마킹)
   const marked = useMemo(() => {
     const m: Record<string, any> = {};
@@ -58,6 +57,61 @@ export default function CalendarTab() {
           selectedDayBackgroundColor: "#2f95dc",
           arrowColor: "#2f95dc",
         }}
+        // ✅ 목표 달성 배지: 큰 노란 왕관 👑
+        dayComponent={({ date, state }) => {
+          const dateStr = date.dateString as string;
+          const isSelected = selected === dateStr;
+          const total = dayTotals[dateStr] ?? 0;
+          const achieved = target > 0 && total >= target;
+
+          return (
+            <Pressable
+              onPress={() => onDayPress(date as unknown as RNCalDateObject)}
+              style={{ alignItems: "center", justifyContent: "center", paddingVertical: 4 }}
+            >
+              <View
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: isSelected ? "#2f95dc" : "transparent",
+                  position: "relative",
+                }}
+              >
+                <Text
+                  style={{
+                    color: isSelected ? "white" : state === "disabled" ? "#c0c0c0" : "#222",
+                    fontWeight: isSelected ? "700" : "500",
+                  }}
+                >
+                  {date.day}
+                </Text>
+
+                {/* 👑 더 크게 보이는 왕관 배지 */}
+                {achieved && (
+                  <View
+                    style={{
+                      position: "absolute",
+                      top: -6,
+                      right: -6,
+                      backgroundColor: "#f39c12",
+                      borderRadius: 12,
+                      paddingHorizontal: 4,
+                      paddingVertical: 2,
+                      minWidth: 22,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Text style={{ fontSize: 14 }}>🏆</Text>
+                  </View>
+                )}
+              </View>
+            </Pressable>
+          );
+        }}
       />
 
       <View style={{ gap: 4 }}>
@@ -71,9 +125,7 @@ export default function CalendarTab() {
       <FlatList
         data={logs}
         keyExtractor={(l) => l.id}
-        ListEmptyComponent={
-          <Text style={{ color: "#888", marginTop: 8 }}>기록이 없습니다.</Text>
-        }
+        ListEmptyComponent={<Text style={{ color: "#888", marginTop: 8 }}>기록이 없습니다.</Text>}
         renderItem={({ item }) => (
           <View
             style={{
