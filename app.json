@@ -18,7 +18,7 @@
     ],
     "android": {
       "package": "com.jaekim.todaywater",
-      "versionCode": 1,
+      "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#FFFFFF"
